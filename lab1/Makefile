@@ -1,5 +1,5 @@
 CXX = g++
-CXXFLAGS = -O2 -fopenmp
+CXXFLAGS = -O2
 
 TARGET = matrix_mul
 SRC = src/main.cpp
