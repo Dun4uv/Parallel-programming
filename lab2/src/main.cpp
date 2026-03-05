@@ -2,9 +2,9 @@
 #include <vector>
 #include <fstream>
 #include <chrono>
+#include <omp.h>
 
 using namespace std;
-
 using Matrix = vector<vector<double>>;
 
 Matrix readMatrix(const string& filename, int& N) {
@@ -36,10 +36,13 @@ void writeMatrix(const string& filename, const Matrix& M) {
     }
 }
 
-Matrix multiply(const Matrix& A, const Matrix& B) {
+Matrix multiply(const Matrix& A, const Matrix& B, int threads) {
     int N = A.size();
     Matrix C(N, vector<double>(N, 0.0));
 
+    omp_set_num_threads(threads);
+
+#pragma omp parallel for schedule(static)
     for (int i = 0; i < N; i++) {
         for (int k = 0; k < N; k++) {
             for (int j = 0; j < N; j++) {
@@ -47,13 +50,15 @@ Matrix multiply(const Matrix& A, const Matrix& B) {
             }
         }
     }
+
     return C;
 }
 
 int main(int argc, char* argv[]) {
-    if (argc != 4) {
+
+    if (argc != 5) {
         cout << "Использование:\n";
-        cout << "matrix_mul.exe A.txt B.txt result.txt\n";
+        cout << "./matrix_mul A.txt B.txt result.txt threads\n";
         return 1;
     }
 
@@ -67,10 +72,10 @@ int main(int argc, char* argv[]) {
         return 1;
     }
 
+    int threads = stoi(argv[4]);
+
     auto start = chrono::high_resolution_clock::now();
-
-    Matrix C = multiply(A, B);
-
+    Matrix C = multiply(A, B, threads);
     auto end = chrono::high_resolution_clock::now();
 
     chrono::duration<double> elapsed = end - start;
@@ -82,6 +87,7 @@ int main(int argc, char* argv[]) {
     cout << "Размер матрицы: " << N1 << "x" << N1 << '\n';
     cout << "Операции: " << operations << '\n';
     cout << "Время: " << elapsed.count() << " seconds\n";
+    cout << "Потоков: " << threads << '\n';
 
     return 0;
 }
