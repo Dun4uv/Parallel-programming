@@ -1,0 +1,4 @@
+Matrix: 2000x2000
+Operations: 16000000000
+Time: 19.0285 seconds
+Processes MPI: 4
