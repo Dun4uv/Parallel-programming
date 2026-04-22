@@ -1,18 +1,18 @@
 import os
 import subprocess
 import numpy as np
-import matplotlib.pyplot as plt
+import time
 
-SIZES = [200, 400, 800, 1200, 1600, 2000]
-PROCESSES = [1, 2, 4, 8]
-EXECUTABLE = "matrix_mul.exe"
+SIZES = [400, 800, 1200, 1600, 2000]
+PROCESSES = [1, 2, 4, 8, 16]
+EXECUTABLE = "./matrixMulMPI"
 DATA_DIR = "data"
 RESULTS_DIR = "results"
-VERIFY_SCRIPT = "verify/verify.py"
+LOGS_DIR = "logs"
 
 
 def generate_matrix(filename, n):
-    """Генерирует случайную матрицу"""
+    """Генерирует матрицу"""
     matrix = np.random.uniform(0, 10, size=(n, n))
     with open(filename, 'w') as f:
         f.write(f"{n}\n")
@@ -20,84 +20,58 @@ def generate_matrix(filename, n):
             f.write(" ".join(map(lambda x: f"{x:.4f}", row)) + "\n")
 
 
-def run_test(n, processes, file_a, file_b, file_res):
-    """Запускает MPI-программу через mpiexec и парсит вывод"""
-    print(f"  -> Тестирование: Процессов = {processes}")
+def submit_job(n, p):
+    """Создает .pbs файл и отправляет его через sbatch"""
+    file_a = os.path.join(DATA_DIR, f"A_{n}.txt")
+    file_b = os.path.join(DATA_DIR, f"B_{n}.txt")
+    file_res = os.path.join(RESULTS_DIR, f"res_{n}_{p}.txt")
+    log_file = os.path.join(LOGS_DIR, f"job_{n}_{p}.out")
 
-    cmd = ["mpiexec", "-n", str(processes), EXECUTABLE, file_a, file_b, file_res]
+    job_content = f"""#!/bin/bash
+#SBATCH --job-name=mat_n{n}_p{p}
+#SBATCH --time=0:05:00
+#SBATCH --ntasks={p}
+#SBATCH --partition=batch
+#SBATCH --output={log_file}
 
-    try:
-        result = subprocess.run(cmd, capture_output=True, text=True, encoding='utf-8')
+module load intel/mpi4
+mpirun {EXECUTABLE} {file_a} {file_b} {file_res}
+"""
 
-        if result.returncode != 0:
-            print(f"     Ошибка выполнения MPI: {result.stderr}")
-            return None
+    script_name = f"temp_job_{n}_{p}.pbs"
+    with open(script_name, "w") as f:
+        f.write(job_content)
 
-        exec_time = 0.0
-        for line in result.stdout.split('\n'):
-            if "Время:" in line:
-                exec_time = float(line.split(":")[1].strip().split()[0])
+    result = subprocess.run(
+        ["sbatch", script_name], stdout=subprocess.PIPE, stderr=subprocess.PIPE, universal_newlines=True)
 
-        is_valid = False
-        verify_cmd = ["python", VERIFY_SCRIPT, file_a, file_b, file_res]
-        v_result = subprocess.run(verify_cmd, capture_output=True, text=True)
-        is_valid = "Все верно!" in v_result.stdout
-        valid_text = 'OK' if is_valid else 'FAIL'
+    if result.returncode == 0:
+        print(f" Задача N={n}, P={p} отправлена. ID: {result.stdout.strip().split()[-1]}")
+    else:
+        print(f" Не удалось отправить N={n}, P={p}: {result.stderr}")
 
-
-        print(f"     Время: {exec_time:.4f} сек | Валидация: {valid_text}")
-        return exec_time
-
-    except Exception as e:
-        print(f"     Сбой при запуске: {e}")
-        return None
+    os.remove(script_name)
 
 
 def main():
-    os.makedirs(DATA_DIR, exist_ok=True)
-    os.makedirs(RESULTS_DIR, exist_ok=True)
-
-    file_a = os.path.join(DATA_DIR, "A.txt")
-    file_b = os.path.join(DATA_DIR, "B.txt")
-    file_res = os.path.join(RESULTS_DIR, "Result.txt")
-
-    results_by_processes = {p: [] for p in PROCESSES}
-    flat_results = []
+    for d in [DATA_DIR, RESULTS_DIR, LOGS_DIR]:
+        if not os.path.exists(d):
+            os.makedirs(d)
 
     for n in SIZES:
-        print(f"\n=== N = {n} (Генерация матриц...) ===")
-        generate_matrix(file_a, n)
-        generate_matrix(file_b, n)
+        print(f"\n=== Подготовка матриц для N = {n} ===")
+        file_a = os.path.join(DATA_DIR, f"A_{n}.txt")
+        file_b = os.path.join(DATA_DIR, f"B_{n}.txt")
+
+        if not os.path.exists(file_a):
+            generate_matrix(file_a, n)
+            generate_matrix(file_b, n)
 
         for p in PROCESSES:
-            elapsed = run_test(n, p, file_a, file_b, file_res)
-            if elapsed is not None:
-                results_by_processes[p].append((n, elapsed))
-                flat_results.append((n, p, elapsed))
+            submit_job(n, p)
+            time.sleep(0.2)
 
-    if flat_results:
-        plt.figure(figsize=(10, 6))
-        colors = ['red', 'blue', 'green', 'orange', 'purple', 'brown']
-
-        for i, p in enumerate(PROCESSES):
-            if results_by_processes[p]:
-                ns, ts = zip(*results_by_processes[p])
-                plt.plot(ns, ts, marker='o', linestyle='-', color=colors[i % len(colors)], label=f'{p} процессов')
-
-        plt.title('Производительность матричного умножения (MPI)')
-        plt.xlabel('Размер матрицы N')
-        plt.ylabel('Время выполнения (сек)')
-        plt.grid(True)
-        plt.legend()
-        plt.savefig('performance_results.png')
-        print("\nГрафик сохранен в performance_results.png")
-
-        print("\nТаблица результатов:")
-        print("| N | Процессов | Время (сек) | Операций (2N³) |")
-        print("|---|-----------|-------------|----------------|")
-        for n, p, elapsed in flat_results:
-            print(f"| {n} | {p} | {elapsed:.4f} | {2 * (n ** 3):,} |")
-
+    print("\nВсе задачи отправлены!")
 
 if __name__ == "__main__":
     main()
